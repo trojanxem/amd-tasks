@@ -9,29 +9,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: set up python version
+      - name: Set up Python
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
-      - name: install depenedencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: linters
+      - name: Lint
         run: ruff check .
-      
-      - name: check formatting 
+
+      - name: Check formatting
         run: ruff format --check .
 
-      - name: run tests
+      - name: Test fixed implementation
         run: pytest
 
-      - name: verify race fault detection
+      - name: Verify race fault detection
         run: |
           set +e
 
@@ -41,14 +41,14 @@ jobs:
           set -e
 
           if [ "$status" -eq 1 ]; then
-            echo "Race fault detected as expected"
+            echo "Race fault detected as expected."
             exit 0
           fi
 
           if [ "$status" -eq 0 ]; then
-            echo "ERROR: Race fault was enabled but not detected"
+            echo "ERROR: Race fault was enabled but not detected."
             exit 1
           fi
 
-        echo "ERROR: Pytest failed unexepctedly with exit code $status."
-        exit "$status"
+          echo "ERROR: Pytest failed unexpectedly with exit code $status."
+          exit "$status"
