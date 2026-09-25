@@ -28,7 +28,7 @@ jobs:
       - name: Check formatting
         run: ruff format --check .
 
-      - name: Test fixed implementation
+      - name: Run regression tests
         run: pytest
 
       - name: Verify race fault detection
