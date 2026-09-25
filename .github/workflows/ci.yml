@@ -30,3 +30,25 @@ jobs:
 
       - name: run tests
         run: pytest
+
+      - name: verify race fault detection
+        run: |
+          set +e
+
+          pytest tests/test_race_condition.py --race-fault
+          status=$?
+
+          set -e
+
+          if [ "$status" -eq 1 ]; then
+            echo "Race fault detected as expected"
+            exit 0
+          fi
+
+          if [ "$status" -eq 0 ]; then
+            echo "ERROR: Race fault was enabled but not detected"
+            exit 1
+          fi
+
+        echo "ERROR: Pytest failed unexepctedly with exit code $status."
+        exit "$status"
