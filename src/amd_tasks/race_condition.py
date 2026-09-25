@@ -1,40 +1,42 @@
-from threading import Event, Thread
+"""TOCTOU race condition for inventory file access."""
+
+import json
+from pathlib import Path
 
 
-def collect_inventory(fault_enabled: bool = False) -> dict:
-    """Collect switch inventory from two nodes."""
+def write_inventory(path: Path) -> None:
+    """Write sample switch inventory to a file."""
 
-    results = {}
+    inventory = {
+        "switch": "switch-1",
+        "ports": 48,
+    }
 
-    release_node_b = Event()
-    # This makes the race deterministic instead of relying on sleep
+    path.write_text(
+        json.dumps(inventory),
+        encoding="utf-8",
+    )
 
-    def node_a() -> None:
-        results["node-a"] = {"ports": 48}
 
-    def node_b() -> None:
-        release_node_b.wait()
-        results["node-b"] = {"ports": 64}
-
-    thread_node_a = Thread(target=node_a)
-    thread_node_b = Thread(target=node_b)
-
-    thread_node_a.start()
-    thread_node_b.start()
-
-    thread_node_a.join()
+def read_inventory(
+    path: Path,
+    fault_enabled: bool = False,
+) -> dict | None:
+    """Read switch inventory from a file."""
 
     if fault_enabled:
-        # BUG, let's aggregate results before B has finished
+        # BUG:
+        # The file may disappear between the existence check
+        # and the actual read.
+        if not path.exists():
+            return None
 
-        snapshot = results.copy()
+        return json.loads(path.read_text(encoding="utf-8"))
 
-        release_node_b.set()
-        thread_node_b.join()
-
-        return snapshot
-
-    release_node_b.set()
-    thread_node_b.join()
-
-    return results.copy()
+    # FIX:
+    # Do not rely on a previous existence check.
+    # Try to read the file and handle its disappearance.
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None

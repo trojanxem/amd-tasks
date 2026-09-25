@@ -28,27 +28,25 @@ jobs:
       - name: Check formatting
         run: ruff format --check .
 
-      - name: Run regression tests
-        run: pytest
+      - name: Unit tests
+        run: pytest -v tests/test_inventory_reader.py
 
-      - name: Verify race fault detection
+      - name: Regression tests
+        run: pytest -v tests/integration/test_toctou.py
+
+      - name: Verify TOCTOU fault detection
         run: |
           set +e
 
-          pytest tests/test_race_condition.py --race-fault
+          pytest -v tests/integration/test_toctou.py --race-fault
           status=$?
 
           set -e
 
-          if [ "$status" -eq 1 ]; then
-            echo "Race fault detected as expected."
-            exit 0
-          fi
-
-          if [ "$status" -eq 0 ]; then
-            echo "ERROR: Race fault was enabled but not detected."
+          if [ "$status" -ne 1 ]; then
+            echo "Expected fault-enabled test to fail with exit code 1"
+            echo "Actual exit code: $status"
             exit 1
           fi
 
-          echo "ERROR: Pytest failed unexpectedly with exit code $status."
-          exit "$status"
+          echo "TOCTOU fault detected successfully"
