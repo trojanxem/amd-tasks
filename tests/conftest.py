@@ -20,6 +20,13 @@ def pytest_addoption(parser) -> None:
         help="Enable the circular-wait deadlock fault",
     )
 
+    parser.addoption(
+        "--thread-contention-fault",
+        action="store_true",
+        default=False,
+        help="Enable the thread contention fault",
+    )
+
 
 @pytest.fixture
 def race_fault(request) -> bool:
@@ -33,3 +40,10 @@ def deadlock_fault(request) -> bool:
     """Return whether the deadlock fault is enabled."""
 
     return request.config.getoption("--deadlock-fault")
+
+
+@pytest.fixture
+def thread_contention_fault(request) -> bool:
+    """Return whether the thread contention fault is enabled."""
+
+    return request.config.getoption("--thread-contention-fault")

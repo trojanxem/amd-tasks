@@ -40,9 +40,7 @@ def start_inventory_workers(
 
         except Exception as error:
             with errors_lock:
-                errors.append(
-                    (worker_id, error)
-                )
+                errors.append((worker_id, error))
 
     threads = [
         Thread(

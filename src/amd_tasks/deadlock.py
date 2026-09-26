@@ -11,7 +11,6 @@ def start_inventory_sync(
 ) -> tuple[list[Thread], dict[str, Event]]:
     """Start inventory and sync-state updates."""
 
-    # Existing inventory from a previous switch fetch.
     inventory_path.write_text(
         '{"switch": "switch-1", "ports": 24}',
         encoding="utf-8",
@@ -19,9 +18,6 @@ def start_inventory_sync(
 
     inventory_lock = Lock()
     sync_state_lock = Lock()
-
-    # Used only in fault mode to deterministically create
-    # the circular-wait condition.
     barrier = Barrier(2)
 
     inventory_done = Event()
@@ -47,7 +43,8 @@ def start_inventory_sync(
 
     def update_fetch_state() -> None:
         if fault_enabled:
-            # BUG: opposite lock order.
+            # BUG:
+            # Locks are acquired in the opposite order.
             with sync_state_lock:
                 sync_state_path.write_text(
                     "inventory fetched",
@@ -64,7 +61,8 @@ def start_inventory_sync(
             fetch_state_done.set()
             return
 
-        # FIX: same lock order as save_inventory().
+        # FIX:
+        # Both operations use the same lock order.
         with inventory_lock:
             with sync_state_lock:
                 inventory_path.read_text(
@@ -82,12 +80,10 @@ def start_inventory_sync(
         Thread(
             target=save_inventory,
             name="inventory-writer",
-            daemon=True,
         ),
         Thread(
             target=update_fetch_state,
             name="fetch-state-writer",
-            daemon=True,
         ),
     ]
 

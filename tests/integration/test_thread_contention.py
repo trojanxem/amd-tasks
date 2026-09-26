@@ -53,25 +53,16 @@ def test_inventory_fetches_run_concurrently(
     for thread in threads:
         thread.join(timeout=2)
 
-    blocked_threads = [
-        thread.name
-        for thread in threads
-        if thread.is_alive()
-    ]
+    blocked_threads = [thread.name for thread in threads if thread.is_alive()]
 
     assert not blocked_threads, (
-        "SCENARIO_ERROR[thread-contention]: "
-        f"workers did not finish: {blocked_threads}"
+        f"SCENARIO_ERROR[thread-contention]: workers did not finish: {blocked_threads}"
     )
 
-    assert not errors, (
-        "SCENARIO_ERROR[thread-contention]: "
-        f"worker exceptions: {errors}"
-    )
+    assert not errors, f"SCENARIO_ERROR[thread-contention]: worker exceptions: {errors}"
 
     assert len(cache) == worker_count, (
-        "SCENARIO_ERROR[thread-contention]: "
-        f"expected {worker_count} results, got {len(cache)}"
+        f"SCENARIO_ERROR[thread-contention]: expected {worker_count} results, got {len(cache)}"
     )
 
     assert concurrent_fetches == worker_count, (

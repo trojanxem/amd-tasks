@@ -41,9 +41,6 @@ def test_disappearing_inventory_is_handled(
             fault_enabled=race_fault,
         )
     except FileNotFoundError:
-        pytest.fail(
-            "FAULT_DETECTED[toctou]: "
-            "file disappeared between existence check and read"
-        )
+        pytest.fail("FAULT_DETECTED[toctou]: file disappeared between existence check and read")
 
     assert result is None
