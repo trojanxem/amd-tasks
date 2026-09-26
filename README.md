@@ -1,297 +1,345 @@
 # Fault Injection & Detection
 
 Small Python project demonstrating common concurrency and performance faults
-and reliable ways of detecting them.
-
-Each fault can be switched between a fixed and faulty implementation.
-The detection suite is built with Pytest and runs automatically in GitHub Actions.
-
-## Faults
-
-| Fault | Status | Detection |
-|---|---|---|
-| Race condition / premature aggregation | Implemented | Pytest + deterministic synchronization |
-| Deadlock | Planned | TODO |
-| Thread contention | Planned | TODO |
-| I/O contention | Planned | TODO |
-| CPU contention | Planned | TODO |
-
-## Project structure
-
-```text
-.
-├── src/
-│   └── amd_tasks/
-│       ├── race_condition.py
-│       ├── deadlock.py
-│       └── contention/
-│           ├── thread.py
-│           ├── io.py
-│           └── cpu.py
-│
-├── tests/
-│   ├── conftest.py
-│   ├── test_race_condition.py
-│   ├── test_deadlock.py
-│   └── contention/
-│       ├── test_thread.py
-│       ├── test_io.py
-│       └── test_cpu.py
-│
-├── .github/
-│   └── workflows/
-│       └── ci.yml
-│
-├── pyproject.toml
-└── README.md
-```
-
-## How it works
-
-```mermaid
-flowchart LR
-    F[Fault toggle] --> I[Implementation]
-    I --> S[Scenario]
-    S --> D[Detection test]
-    D --> R{Expected behaviour?}
-    R -->|Yes| P[PASS]
-    R -->|No| X[Fault detected]
-```
-
-The normal test suite runs against the fixed implementation.
-
-Individual faults can be enabled explicitly from the Pytest command line.
-When a fault is enabled, the same behavioural test should detect the injected
-problem.
+together with deterministic detection tests.
 
 ## Setup
 
-Create and activate a virtual environment:
+Create and activate the virtual environment:
 
 ```bash
-python3 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 ```
 
 Install the project and development dependencies:
 
 ```bash
-python -m pip install --upgrade pip
 pip install -e ".[dev]"
 ```
 
-## Code quality
+## Running tests
 
-Run Ruff:
-
-```bash
-ruff check .
-ruff format --check .
-```
-
-Format the code automatically:
-
-```bash
-ruff format .
-```
-
-## Run tests
-
-Run the normal test suite:
-
-```bash
-pytest
-```
-
-Run with verbose output:
+Run all tests with the fixed implementations:
 
 ```bash
 pytest -v
 ```
 
----
+All tests should pass.
 
-# Race condition — premature inventory aggregation
-
-## Scenario
-
-Two nodes independently collect switch inventory.
-
-The inventory snapshot should be created only after both nodes have finished
-collecting their data.
-
-```mermaid
-sequenceDiagram
-    participant A as Node A
-    participant B as Node B
-    participant C as Collector
-
-    A->>C: Inventory ready
-    B-->>B: Still collecting
-
-    alt Fault enabled
-        C->>C: Create snapshot too early
-    else Fixed
-        C->>C: Wait for Node B
-        B->>C: Inventory ready
-        C->>C: Create complete snapshot
-    end
-```
-
-## Root cause
-
-The faulty implementation creates the inventory snapshot before all expected
-nodes have completed their work.
-
-There is no synchronization between completion of Node B and the aggregation
-step.
-
-## Expected symptom
-
-The published inventory snapshot is incomplete.
-
-Instead of:
-
-```text
-node-a
-node-b
-```
-
-the faulty implementation contains only:
-
-```text
-node-a
-```
-
-## Fault toggle
-
-The race condition fault is disabled by default.
-
-### Fixed implementation
+Run all fault-detection checks:
 
 ```bash
-pytest tests/test_race_condition.py
+bash scripts/verify_faults.sh
 ```
 
-Expected result:
+The script enables each fault separately and verifies that the corresponding
+test fails for the expected reason.
+
+## Fault flags
+
+Each scenario has two modes:
 
 ```text
-PASS
+no fault flag
+→ fixed implementation
+→ test passes
+
+fault flag enabled
+→ buggy implementation
+→ same test fails
 ```
 
-### Faulty implementation
+Available flags:
 
-Enable the fault with:
+```text
+--race-fault
+--deadlock-fault
+--thread-contention-fault
+--io-contention-fault
+--cpu-contention-fault
+```
+
+The fault flags only switch between the fixed and buggy implementations.
+The test expectation stays the same.
+
+---
+
+## TOCTOU race condition
+
+The inventory reader accesses a file that may disappear between checking that
+it exists and actually reading it.
+
+### Bug
+
+```text
+exists() -> True
+       |
+       | file removed
+       v
+read() -> FileNotFoundError
+```
+
+The fixed implementation reads the file directly and handles
+`FileNotFoundError`.
+
+The test deterministically removes a real temporary file immediately before
+the read operation.
+
+Run fixed:
 
 ```bash
-pytest tests/test_race_condition.py --race-fault
+pytest -v tests/integration/test_toctou.py
 ```
 
-Expected result:
+Expected:
 
 ```text
-FAIL
+PASSED
 ```
 
-The failure is expected because the test detects the incomplete inventory
-snapshot.
-
-## Detection
-
-The test defines one invariant:
-
-```text
-The inventory snapshot must contain every expected node.
-```
-
-The same test is executed against both implementations.
-
-With the fixed implementation:
-
-```text
-expected: node-a, node-b
-actual:   node-a, node-b
-result:   PASS
-```
-
-With the fault enabled:
-
-```text
-expected: node-a, node-b
-actual:   node-a
-result:   FAIL — fault detected
-```
-
-The scenario uses `threading.Event` to control when Node B can finish.
-
-No `sleep()` or timing assumptions are used, making the fault deterministic
-and repeatable.
-
----
-
-# Deadlock
-
-TODO.
-
-This section will describe:
-
-- Scenario
-- Root cause
-- Expected symptom
-- Fault toggle
-- Detection method
-
----
-
-# Thread contention
-
-TODO.
-
----
-
-# I/O contention
-
-TODO.
-
----
-
-# CPU contention
-
-TODO.
-
----
-
-# Continuous Integration
-
-GitHub Actions runs code quality checks and the normal test suite on pushes
-and pull requests.
-
-The CI pipeline checks:
-
-```text
-Ruff lint
-    ↓
-Ruff formatting
-    ↓
-Pytest
-```
-
-Fault-injection checks are executed separately to verify that the detection
-suite actually detects an enabled fault.
-
-## Race condition detection
-
-Normal implementation:
+Enable the fault:
 
 ```bash
-pytest tests/test_race_condition.py
+pytest -v tests/integration/test_toctou.py --race-fault
 ```
 
-Injected fault:
+Expected:
+
+```text
+FAILED
+FAULT_DETECTED[toctou]
+```
+
+---
+
+## Circular-wait deadlock
+
+Two threads operate on inventory and synchronization state.
+
+The fixed implementation always acquires locks in the same order:
+
+```text
+inventory_lock -> sync_state_lock
+```
+
+The faulty implementation reverses the order in one worker:
+
+```text
+inventory writer:   inventory_lock -> sync_state_lock
+fetch-state writer: sync_state_lock -> inventory_lock
+```
+
+This creates a circular wait.
+
+A `Barrier` makes the deadlock deterministic.
+The scenario runs in a separate process so the watchdog can terminate it
+after detecting the deadlock.
+
+Run fixed:
 
 ```bash
-pytest tests/test_race_condition.py --race-fault
+pytest -v tests/integration/test_deadlock.py
 ```
 
-The injected run is expected to produce a failing test. CI treats that expected
-failure as confirmation that the detector works.
+Expected:
+
+```text
+PASSED
+```
+
+Enable the fault:
+
+```bash
+pytest -v tests/integration/test_deadlock.py --deadlock-fault
+```
+
+Expected:
+
+```text
+FAILED
+FAULT_DETECTED[deadlock]
+```
+
+---
+
+## Thread contention
+
+Multiple workers fetch switch inventory and update a shared cache.
+
+The fixed implementation performs the expensive fetch outside the cache lock:
+
+```text
+fetch -> cache_lock -> cache update
+```
+
+The faulty implementation holds the cache lock during the fetch:
+
+```text
+cache_lock -> fetch -> cache update
+```
+
+This creates a hot lock and serializes work that should run concurrently.
+
+The test measures how many workers can enter the fetch operation at the same
+time and also verifies that all workers finish successfully.
+
+Run fixed:
+
+```bash
+pytest -v tests/integration/test_thread_contention.py
+```
+
+Expected:
+
+```text
+PASSED
+```
+
+Enable the fault:
+
+```bash
+pytest -v tests/integration/test_thread_contention.py \
+    --thread-contention-fault
+```
+
+Expected:
+
+```text
+FAILED
+FAULT_DETECTED[thread-contention]
+```
+
+---
+
+## I/O contention
+
+Multiple workers persist switch inventory snapshots to disk.
+
+The faulty implementation performs a synchronous disk flush for every small
+inventory record:
+
+```text
+write -> flush -> fsync
+write -> flush -> fsync
+write -> flush -> fsync
+...
+```
+
+This creates excessive synchronous disk I/O when several writers run at the
+same time.
+
+The fixed implementation batches the complete snapshot and performs one
+synchronous flush:
+
+```text
+write complete snapshot -> flush -> fsync
+```
+
+The test performs real file writes and real `fsync()` calls.
+It counts synchronous flushes as the deterministic detection signal and also
+reports execution time as a diagnostic metric.
+
+Run fixed:
+
+```bash
+pytest -v -s tests/integration/test_io_contention.py
+```
+
+Expected:
+
+```text
+PASSED
+```
+
+Enable the fault:
+
+```bash
+pytest -v -s tests/integration/test_io_contention.py \
+    --io-contention-fault
+```
+
+Expected:
+
+```text
+FAILED
+FAULT_DETECTED[io-contention]
+```
+
+---
+
+## CPU contention
+
+Inventory snapshots are compressed before archival.
+
+The fixed implementation uses a bounded number of CPU workers:
+
+```text
+8 snapshots
+     |
+     v
+2 compression processes
+```
+
+The faulty implementation starts one CPU-bound process for every snapshot:
+
+```text
+8 snapshots
+     |
+     v
+8 compression processes
+```
+
+The processes perform real inventory serialization and gzip compression.
+
+The detector verifies that the configured CPU worker limit is respected.
+Execution time is reported as a diagnostic metric but is not used as the main
+CI threshold because runtime depends on the host hardware.
+
+Run fixed:
+
+```bash
+pytest -v -s tests/integration/test_cpu_contention.py
+```
+
+Expected:
+
+```text
+PASSED
+```
+
+Enable the fault:
+
+```bash
+pytest -v -s tests/integration/test_cpu_contention.py \
+    --cpu-contention-fault
+```
+
+Expected:
+
+```text
+FAILED
+FAULT_DETECTED[cpu-contention]
+```
+
+---
+
+## CI
+
+GitHub Actions runs:
+
+```text
+Code quality
+Unit tests
+Integration tests
+Fault detection
+```
+
+Normal tests run against the fixed implementations and must pass.
+
+The fault-detection job enables each faulty implementation separately and
+checks for its specific `FAULT_DETECTED[...]` marker.
+
+This prevents unrelated test failures from being reported as successful fault
+detection.

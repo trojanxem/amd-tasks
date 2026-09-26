@@ -34,10 +34,17 @@ def pytest_addoption(parser) -> None:
         help="Enable the I/O contention fault",
     )
 
+    parser.addoption(
+        "--cpu-contention-fault",
+        action="store_true",
+        default=False,
+        help="Enable the CPU contention fault",
+    )
+
 
 @pytest.fixture
 def race_fault(request) -> bool:
-    """Return whether the TOCTOU race fault is enabled."""
+    """Return whether the TOCTOU fault is enabled."""
 
     return request.config.getoption("--race-fault")
 
@@ -61,3 +68,10 @@ def io_contention_fault(request) -> bool:
     """Return whether the I/O contention fault is enabled."""
 
     return request.config.getoption("--io-contention-fault")
+
+
+@pytest.fixture
+def cpu_contention_fault(request) -> bool:
+    """Return whether the CPU contention fault is enabled."""
+
+    return request.config.getoption("--cpu-contention-fault")

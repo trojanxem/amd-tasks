@@ -55,3 +55,8 @@ expect_fault \
     "I/O contention fault" \
     "FAULT_DETECTED[io-contention]" \
     pytest -v tests/integration/test_io_contention.py --io-contention-fault
+
+expect_fault \
+    "CPU contention fault" \
+    "FAULT_DETECTED[cpu-contention]" \
+    pytest -v tests/integration/test_cpu_contention.py --cpu-contention-fault
