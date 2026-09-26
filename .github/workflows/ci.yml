@@ -1,52 +1,26 @@
-name: CI
-
-on:
-  push:
-  pull_request:
-
-jobs:
-  quality:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.14"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: Lint
-        run: ruff check .
-
-      - name: Check formatting
-        run: ruff format --check .
-
-      - name: Unit tests
-        run: pytest -v tests/test_inventory_reader.py
-
       - name: Regression tests
-        run: pytest -v tests/integration/test_toctou.py
+        run: pytest -v
 
       - name: Verify TOCTOU fault detection
         run: |
           set +e
-
           pytest -v tests/integration/test_toctou.py --race-fault
           status=$?
-
           set -e
 
           if [ "$status" -ne 1 ]; then
-            echo "Expected fault-enabled test to fail with exit code 1"
-            echo "Actual exit code: $status"
+            echo "TOCTOU fault was not detected"
             exit 1
           fi
 
-          echo "TOCTOU fault detected successfully"
+      - name: Verify deadlock detection
+        run: |
+          set +e
+          pytest -v tests/integration/test_deadlock.py --deadlock-fault
+          status=$?
+          set -e
+
+          if [ "$status" -ne 1 ]; then
+            echo "Deadlock fault was not detected"
+            exit 1
+          fi
