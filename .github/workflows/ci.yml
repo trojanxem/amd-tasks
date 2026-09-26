@@ -4,10 +4,35 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  code-quality:
-    name: Code quality
+  checks:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Code quality
+            command: |
+              ruff check .
+              ruff format --check .
+
+          - name: Unit tests
+            command: |
+              pytest -v tests/test_inventory_reader.py
+
+          - name: Integration tests
+            command: |
+              pytest -v tests/integration
+
+          - name: Fault detection
+            command: |
+              bash scripts/verify_faults.sh
 
     steps:
       - name: Checkout repository
@@ -17,108 +42,14 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Lint
-        run: ruff check .
-
-      - name: Check formatting
-        run: ruff format --check .
-
-  unit-tests:
-    name: Unit tests
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.14"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: Run unit tests
-        run: pytest -v tests/test_inventory_reader.py
-
-  integration-tests:
-    name: Integration tests
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.14"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: Run integration tests
-        run: pytest -v tests/integration
-
-  fault-detection:
-    name: Fault detection
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.14"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: Verify TOCTOU fault detection
-        run: |
-          set +e
-
-          pytest -v tests/integration/test_toctou.py --race-fault
-          status=$?
-
-          set -e
-
-          if [ "$status" -ne 1 ]; then
-            echo "Expected TOCTOU test to fail with exit code 1"
-            echo "Actual exit code: $status"
-            exit 1
-          fi
-
-          echo "TOCTOU fault detected successfully"
-
-      - name: Verify deadlock detection
-        run: |
-          set +e
-
-          pytest -v tests/integration/test_deadlock.py --deadlock-fault
-          status=$?
-
-          set -e
-
-          if [ "$status" -ne 1 ]; then
-            echo "Expected deadlock test to fail with exit code 1"
-            echo "Actual exit code: $status"
-            exit 1
-          fi
-
-          echo "Deadlock fault detected successfully"
+      - name: Run ${{ matrix.name }}
+        shell: bash
+        run: ${{ matrix.command }}
