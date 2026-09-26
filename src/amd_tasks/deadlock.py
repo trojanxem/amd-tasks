@@ -1,14 +1,14 @@
 """Circular-wait deadlock scenario."""
 
 from pathlib import Path
-from threading import Barrier, Lock, Thread
+from threading import Barrier, Event, Lock, Thread
 
 
 def start_inventory_sync(
     inventory_path: Path,
     sync_state_path: Path,
     fault_enabled: bool = False,
-) -> list[Thread]:
+) -> tuple[list[Thread], dict[str, Event]]:
     """Start inventory and sync-state updates."""
 
     # Existing inventory from a previous switch fetch.
@@ -19,7 +19,13 @@ def start_inventory_sync(
 
     inventory_lock = Lock()
     sync_state_lock = Lock()
+
+    # Used only in fault mode to deterministically create
+    # the circular-wait condition.
     barrier = Barrier(2)
+
+    inventory_done = Event()
+    fetch_state_done = Event()
 
     def save_inventory() -> None:
         with inventory_lock:
@@ -37,6 +43,8 @@ def start_inventory_sync(
                     encoding="utf-8",
                 )
 
+        inventory_done.set()
+
     def update_fetch_state() -> None:
         if fault_enabled:
             # BUG: opposite lock order.
@@ -49,19 +57,26 @@ def start_inventory_sync(
                 barrier.wait()
 
                 with inventory_lock:
-                    inventory_path.read_text(encoding="utf-8")
+                    inventory_path.read_text(
+                        encoding="utf-8",
+                    )
 
+            fetch_state_done.set()
             return
 
         # FIX: same lock order as save_inventory().
         with inventory_lock:
             with sync_state_lock:
-                inventory_path.read_text(encoding="utf-8")
+                inventory_path.read_text(
+                    encoding="utf-8",
+                )
 
                 sync_state_path.write_text(
                     "inventory fetched",
                     encoding="utf-8",
                 )
+
+        fetch_state_done.set()
 
     threads = [
         Thread(
@@ -79,4 +94,9 @@ def start_inventory_sync(
     for thread in threads:
         thread.start()
 
-    return threads
+    completed = {
+        "inventory-writer": inventory_done,
+        "fetch-state-writer": fetch_state_done,
+    }
+
+    return threads, completed

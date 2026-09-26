@@ -5,7 +5,8 @@ on:
   pull_request:
 
 jobs:
-  quality:
+  code-quality:
+    name: Code quality
     runs-on: ubuntu-latest
 
     steps:
@@ -28,18 +29,78 @@ jobs:
       - name: Check formatting
         run: ruff format --check .
 
-      - name: Regression tests
-        run: pytest -v
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run unit tests
+        run: pytest -v tests/test_inventory_reader.py
+
+  integration-tests:
+    name: Integration tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run integration tests
+        run: pytest -v tests/integration
+
+  fault-detection:
+    name: Fault detection
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
 
       - name: Verify TOCTOU fault detection
         run: |
           set +e
+
           pytest -v tests/integration/test_toctou.py --race-fault
           status=$?
+
           set -e
 
           if [ "$status" -ne 1 ]; then
-            echo "TOCTOU fault was not detected"
+            echo "Expected TOCTOU test to fail with exit code 1"
+            echo "Actual exit code: $status"
             exit 1
           fi
 
@@ -48,12 +109,15 @@ jobs:
       - name: Verify deadlock detection
         run: |
           set +e
+
           pytest -v tests/integration/test_deadlock.py --deadlock-fault
           status=$?
+
           set -e
 
           if [ "$status" -ne 1 ]; then
-            echo "Deadlock fault was not detected"
+            echo "Expected deadlock test to fail with exit code 1"
+            echo "Actual exit code: $status"
             exit 1
           fi
 

@@ -23,7 +23,7 @@ def pytest_addoption(parser) -> None:
 
 @pytest.fixture
 def race_fault(request) -> bool:
-    """Return whether the race fault is enabled."""
+    """Return whether the TOCTOU race fault is enabled."""
 
     return request.config.getoption("--race-fault")
 
