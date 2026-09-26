@@ -27,7 +27,9 @@ def test_inventory_fetches_run_concurrently(
             if started_count == worker_count:
                 all_fetches_started.set()
 
-        release_fetch.wait(timeout=2)
+        # Do not release automatically.
+        # The test controls exactly when fetches may continue.
+        release_fetch.wait()
 
         return {
             "switch": f"switch-{worker_id}",
@@ -40,29 +42,38 @@ def test_inventory_fetches_run_concurrently(
         worker_count=worker_count,
     )
 
-    # Give all workers a chance to enter the fetch operation.
-    # In fault mode only one can enter because it owns cache_lock.
+    # In fixed mode all workers can reach fetch_inventory().
+    # In fault mode only the worker holding cache_lock can reach it.
     all_fetches_started.wait(timeout=2)
 
     with started_lock:
         concurrent_fetches = started_count
 
-    # Allow workers that reached fetch_inventory() to continue.
+    # Always release workers before checking final results.
     release_fetch.set()
 
     for thread in threads:
         thread.join(timeout=2)
 
-    blocked_threads = [thread.name for thread in threads if thread.is_alive()]
+    blocked_threads = [
+        thread.name
+        for thread in threads
+        if thread.is_alive()
+    ]
 
     assert not blocked_threads, (
-        f"SCENARIO_ERROR[thread-contention]: workers did not finish: {blocked_threads}"
+        "SCENARIO_ERROR[thread-contention]: "
+        f"workers did not finish: {blocked_threads}"
     )
 
-    assert not errors, f"SCENARIO_ERROR[thread-contention]: worker exceptions: {errors}"
+    assert not errors, (
+        "SCENARIO_ERROR[thread-contention]: "
+        f"worker exceptions: {errors}"
+    )
 
     assert len(cache) == worker_count, (
-        f"SCENARIO_ERROR[thread-contention]: expected {worker_count} results, got {len(cache)}"
+        "SCENARIO_ERROR[thread-contention]: "
+        f"expected {worker_count} results, got {len(cache)}"
     )
 
     assert concurrent_fetches == worker_count, (
