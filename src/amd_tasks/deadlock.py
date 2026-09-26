@@ -49,18 +49,14 @@ def start_inventory_sync(
                 barrier.wait()
 
                 with inventory_lock:
-                    inventory_path.read_text(
-                        encoding="utf-8"
-                    )
+                    inventory_path.read_text(encoding="utf-8")
 
             return
 
         # FIX: same lock order as save_inventory().
         with inventory_lock:
             with sync_state_lock:
-                inventory_path.read_text(
-                    encoding="utf-8"
-                )
+                inventory_path.read_text(encoding="utf-8")
 
                 sync_state_path.write_text(
                     "inventory fetched",

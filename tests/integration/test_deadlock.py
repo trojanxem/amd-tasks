@@ -19,12 +19,6 @@ def test_inventory_sync_completes(
     for thread in threads:
         thread.join(timeout=0.5)
 
-    blocked_threads = [
-        thread.name
-        for thread in threads
-        if thread.is_alive()
-    ]
+    blocked_threads = [thread.name for thread in threads if thread.is_alive()]
 
-    assert not blocked_threads, (
-        f"Deadlock detected: {blocked_threads}"
-    )
+    assert not blocked_threads, f"Deadlock detected: {blocked_threads}"
