@@ -50,3 +50,8 @@ expect_fault \
     "Thread contention fault" \
     "FAULT_DETECTED[thread-contention]" \
     pytest -v tests/integration/test_thread_contention.py --thread-contention-fault
+
+expect_fault \
+    "I/O contention fault" \
+    "FAULT_DETECTED[io-contention]" \
+    pytest -v tests/integration/test_io_contention.py --io-contention-fault

@@ -27,6 +27,13 @@ def pytest_addoption(parser) -> None:
         help="Enable the thread contention fault",
     )
 
+    parser.addoption(
+        "--io-contention-fault",
+        action="store_true",
+        default=False,
+        help="Enable the I/O contention fault",
+    )
+
 
 @pytest.fixture
 def race_fault(request) -> bool:
@@ -47,3 +54,10 @@ def thread_contention_fault(request) -> bool:
     """Return whether the thread contention fault is enabled."""
 
     return request.config.getoption("--thread-contention-fault")
+
+
+@pytest.fixture
+def io_contention_fault(request) -> bool:
+    """Return whether the I/O contention fault is enabled."""
+
+    return request.config.getoption("--io-contention-fault")
