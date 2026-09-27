@@ -8,48 +8,36 @@ permissions:
   contents: read
 
 jobs:
-  checks:
-    name: ${{ matrix.name }}
-    runs-on: ubuntu-latest
+  tests:
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
-
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Code quality
-            command: |
-              ruff check .
-              ruff format --check .
-
-          - name: Unit tests
-            command: |
-              pytest -v tests/test_inventory_reader.py
-
-          - name: Integration tests
-            command: |
-              pytest -v tests/integration
-
-          - name: Fault detection
-            command: |
-              bash scripts/verify_faults.sh
+          - os: ubuntu-latest
+            python: "3.11"
+          - os: windows-latest
+            python: "3.11"
+          - os: macos-latest
+            python: "3.11"
+          - os: ubuntu-latest
+            python: "3.14"
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Install dependencies
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Tests (fixed)
+        run: python -m pytest -v -s
+      - name: Verify fault detection
+        run: python -m pytest -v -s tests/verify_faults.py
+      - name: Code quality
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: Run ${{ matrix.name }}
-        shell: bash
-        run: ${{ matrix.command }}
+          ruff check .
+          ruff format --check .
+          mypy src tests

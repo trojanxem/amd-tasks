@@ -1,74 +1,44 @@
-"""Integration test for thread contention."""
+"""Hold fetches at a controlled point to measure their overlap."""
 
 from threading import Event, Lock
 
+import pytest
+
 from amd_tasks.contention.thread import start_inventory_workers
+from tests.helpers import FaultDetected, run_isolated
 
 
-def test_inventory_fetches_run_concurrently(
-    thread_contention_fault: bool,
-) -> None:
-    """Inventory workers should fetch concurrently."""
+def _scenario(fault_enabled, worker_count):
+    release, all_started = Event(), Event()
+    counter_lock = Lock()
+    started = 0
 
-    worker_count = 4
+    def fetch(worker_id):
+        nonlocal started
+        with counter_lock:
+            started += 1
+            if started == worker_count:
+                all_started.set()
+        release.wait()
+        return {"switch": f"switch-{worker_id}", "ports": 48}
 
-    release_fetch = Event()
-    all_fetches_started = Event()
+    pool, jobs, cache = start_inventory_workers(fetch, fault_enabled, worker_count)
+    with pool:
+        try:
+            all_started.wait(timeout=2)
+            with counter_lock:
+                concurrent = started
+        finally:
+            release.set()
+        for job in jobs:
+            job.result()
+    assert cache == {i: {"switch": f"switch-{i}", "ports": 48} for i in range(worker_count)}
+    return concurrent
 
-    started_lock = Lock()
-    started_count = 0
 
-    def fetch_inventory(worker_id: int) -> dict:
-        nonlocal started_count
-
-        with started_lock:
-            started_count += 1
-
-            if started_count == worker_count:
-                all_fetches_started.set()
-
-        # Do not release automatically.
-        # The test controls exactly when fetches may continue.
-        release_fetch.wait()
-
-        return {
-            "switch": f"switch-{worker_id}",
-            "ports": 48,
-        }
-
-    threads, cache, errors = start_inventory_workers(
-        fetch_inventory=fetch_inventory,
-        fault_enabled=thread_contention_fault,
-        worker_count=worker_count,
-    )
-
-    # In fixed mode all workers can reach fetch_inventory().
-    # In fault mode only the worker holding cache_lock can reach it.
-    all_fetches_started.wait(timeout=2)
-
-    with started_lock:
-        concurrent_fetches = started_count
-
-    # Always release workers before checking final results.
-    release_fetch.set()
-
-    for thread in threads:
-        thread.join(timeout=2)
-
-    blocked_threads = [thread.name for thread in threads if thread.is_alive()]
-
-    assert not blocked_threads, (
-        f"SCENARIO_ERROR[thread-contention]: workers did not finish: {blocked_threads}"
-    )
-
-    assert not errors, f"SCENARIO_ERROR[thread-contention]: worker exceptions: {errors}"
-
-    assert len(cache) == worker_count, (
-        f"SCENARIO_ERROR[thread-contention]: expected {worker_count} results, got {len(cache)}"
-    )
-
-    assert concurrent_fetches == worker_count, (
-        "FAULT_DETECTED[thread-contention]: "
-        f"only {concurrent_fetches}/{worker_count} "
-        "workers fetched concurrently"
-    )
+@pytest.mark.parametrize("worker_count", [2, 4])
+def test_inventory_fetches_run_concurrently(thread_contention_fault, worker_count):
+    concurrent = run_isolated(_scenario, thread_contention_fault, worker_count)
+    print(f"Threads: {concurrent}/{worker_count} fetches overlap")
+    if concurrent != worker_count:
+        raise FaultDetected("thread-contention", f"only {concurrent} concurrent fetches")

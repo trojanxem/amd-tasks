@@ -1,81 +1,25 @@
-"""Integration test for CPU contention."""
+"""A ready foreground request must get CPU time after at most one bulk chunk."""
 
-from queue import Empty
-from time import perf_counter
+import asyncio
+import gzip
 
 import pytest
 
-from amd_tasks.contention.cpu import start_compression_jobs
+from amd_tasks.contention.cpu import compress_inventory
+from tests.helpers import FaultDetected, run_isolated
 
 
-def test_compression_respects_cpu_worker_limit(
-    cpu_contention_fault: bool,
-) -> None:
-    """Compression should use a bounded number of CPU workers."""
+def _scenario(fault_enabled, chunk_count):
+    snapshots = [f"switch-{i}: ports=48\n".encode() * 1000 for i in range(chunk_count)]
+    archives, response, delayed_by = asyncio.run(compress_inventory(snapshots, fault_enabled))
+    assert [gzip.decompress(data) for data in archives] == snapshots
+    assert gzip.decompress(response) == b"foreground inventory request"
+    return delayed_by
 
-    snapshot_count = 8
-    worker_limit = 2
 
-    start = perf_counter()
-
-    processes, result_queue = start_compression_jobs(
-        fault_enabled=cpu_contention_fault,
-        snapshot_count=snapshot_count,
-        worker_limit=worker_limit,
-    )
-
-    for process in processes:
-        process.join(timeout=20)
-
-    duration = perf_counter() - start
-
-    blocked_processes = [process.name for process in processes if process.is_alive()]
-
-    if blocked_processes:
-        for process in processes:
-            if process.is_alive():
-                process.terminate()
-                process.join()
-
-    assert not blocked_processes, (
-        f"SCENARIO_ERROR[cpu-contention]: processes did not finish: {blocked_processes}"
-    )
-
-    failed_processes = [
-        (process.name, process.exitcode) for process in processes if process.exitcode != 0
-    ]
-
-    assert not failed_processes, (
-        f"SCENARIO_ERROR[cpu-contention]: process failures: {failed_processes}"
-    )
-
-    results = []
-
-    try:
-        for _ in range(snapshot_count):
-            results.append(result_queue.get(timeout=2))
-    except Empty:
-        pytest.fail("SCENARIO_ERROR[cpu-contention]: missing compression results")
-    finally:
-        result_queue.close()
-        result_queue.join_thread()
-
-    switch_ids = {switch_id for switch_id, _, _ in results}
-
-    assert switch_ids == set(range(snapshot_count)), (
-        "SCENARIO_ERROR[cpu-contention]: incomplete compression results"
-    )
-
-    process_count = len(processes)
-
-    print(
-        f"CPU metrics: processes={process_count}, "
-        f"snapshots={snapshot_count}, "
-        f"duration={duration:.4f}s"
-    )
-
-    assert process_count <= worker_limit, (
-        "FAULT_DETECTED[cpu-contention]: "
-        f"started {process_count} CPU workers, "
-        f"configured limit is {worker_limit}"
-    )
+@pytest.mark.parametrize("chunk_count", [4, 8])
+def test_foreground_request_gets_cpu_time(cpu_contention_fault, chunk_count):
+    delayed_by = run_isolated(_scenario, cpu_contention_fault, chunk_count)
+    print(f"CPU: foreground waited for {delayed_by}/{chunk_count} bulk chunks; limit=1")
+    if delayed_by > 1:
+        raise FaultDetected("cpu-contention", f"foreground delayed by {delayed_by} chunks")

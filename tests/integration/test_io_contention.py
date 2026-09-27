@@ -1,85 +1,80 @@
-"""Integration test for I/O contention."""
+"""Measure I/O queueing latency against a controlled service time."""
 
-import os
-from threading import Lock
-from time import perf_counter
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from threading import BoundedSemaphore, Condition, Event, current_thread
+from time import monotonic, sleep
 
-from amd_tasks.contention.io import start_snapshot_writers
+import pytest
+
+from amd_tasks.contention.io import persist_snapshot, start_snapshot_writers
+from tests.helpers import FaultDetected, ScenarioError, run_isolated
+
+SERVICE_TIME = 0.02  # Model a storage/network request taking at least 20 ms.
 
 
-def test_inventory_snapshots_use_batched_io(
-    tmp_path,
-    monkeypatch,
-    io_contention_fault: bool,
-) -> None:
-    """Inventory snapshots should avoid excessive disk flushes."""
+def _scenario(fault_enabled, switch_count):
+    capacity = 2
+    slots = BoundedSemaphore(capacity)
+    changed, release = Condition(), Event()
+    seen = set()
+    waits: list[float] = []
 
-    switch_count = 4
-    ports_per_switch = 8
+    def persist(path, payload):
+        started = monotonic()
+        acquired = slots.acquire(blocking=False)
+        with changed:
+            seen.add(current_thread().name)
+            changed.notify_all()
+        if not acquired:
+            # Measure real blocking on an occupied slot, not the file write itself.
+            slots.acquire()
+            waited = monotonic() - started
+            with changed:
+                waits.append(waited)
+        try:
+            # Hold occupied slots until all clients have attempted access.
+            release.wait()
+            sleep(SERVICE_TIME)
+            persist_snapshot(path, payload)
+        finally:
+            slots.release()
 
-    fsync_count = 0
-    fsync_lock = Lock()
-
-    original_fsync = os.fsync
-
-    def measured_fsync(fd) -> None:
-        nonlocal fsync_count
-
-        with fsync_lock:
-            fsync_count += 1
-
-        # Perform the real disk sync.
-        original_fsync(fd)
-
-    monkeypatch.setattr(
-        os,
-        "fsync",
-        measured_fsync,
-    )
-
-    start = perf_counter()
-
-    threads, errors = start_snapshot_writers(
-        output_dir=tmp_path,
-        fault_enabled=io_contention_fault,
-        switch_count=switch_count,
-        ports_per_switch=ports_per_switch,
-    )
-
-    for thread in threads:
-        thread.join(timeout=5)
-
-    duration = perf_counter() - start
-
-    blocked_threads = [thread.name for thread in threads if thread.is_alive()]
-
-    assert not blocked_threads, (
-        f"SCENARIO_ERROR[io-contention]: workers did not finish: {blocked_threads}"
-    )
-
-    assert not errors, f"SCENARIO_ERROR[io-contention]: worker exceptions: {errors}"
-
-    snapshot_files = list(tmp_path.glob("switch-*.jsonl"))
-
-    assert len(snapshot_files) == switch_count, (
-        "SCENARIO_ERROR[io-contention]: "
-        f"expected {switch_count} snapshots, "
-        f"got {len(snapshot_files)}"
-    )
-
-    for snapshot_file in snapshot_files:
-        lines = snapshot_file.read_text(encoding="utf-8").splitlines()
-
-        assert len(lines) == ports_per_switch, (
-            f"SCENARIO_ERROR[io-contention]: incomplete snapshot: {snapshot_file.name}"
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        pool, jobs = start_snapshot_writers(
+            root, fault_enabled, switch_count, io_limit=capacity, persist=persist
         )
+        with pool:
+            try:
+                with changed:
+                    ready = changed.wait_for(lambda: len(seen) == len(jobs), timeout=5)
+            finally:
+                release.set()
+            for job in jobs:
+                job.result()
+        if not ready:
+            raise ScenarioError("storage clients did not reach the observation point")
+        assert {path.name for path in root.iterdir()} == {
+            f"switch-{i}.jsonl" for i in range(switch_count)
+        }
+        for path in root.iterdir():
+            assert [json.loads(line) for line in path.read_text().splitlines()] == [
+                {"port": i, "status": "up"} for i in range(8)
+            ]
+    return len(waits), max(waits, default=0.0)
 
-    print(f"I/O metrics: fsync={fsync_count}, duration={duration:.4f}s")
 
-    expected_fsync_count = switch_count
-
-    assert fsync_count == expected_fsync_count, (
-        "FAULT_DETECTED[io-contention]: "
-        f"{fsync_count} synchronous disk flushes, "
-        f"expected {expected_fsync_count}"
+@pytest.mark.parametrize("switch_count", [4, 8])
+def test_storage_has_no_queueing_latency_spike(io_contention_fault, switch_count):
+    queued, max_wait = run_isolated(_scenario, io_contention_fault, switch_count)
+    print(
+        f"I/O: {queued} queued requests; max slot wait={max_wait * 1000:.1f} ms; "
+        f"service time >= {SERVICE_TIME * 1000:.0f} ms"
     )
+    if max_wait >= SERVICE_TIME:
+        raise FaultDetected(
+            "io-contention",
+            f"slot wait {max_wait * 1000:.1f} ms >= one service interval; {queued} queued requests",
+        )

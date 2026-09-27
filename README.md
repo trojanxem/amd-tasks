@@ -1,345 +1,123 @@
 # Fault Injection & Detection
 
-Small Python project demonstrating common concurrency and performance faults
-together with deterministic detection tests.
+Five small examples with independently switchable faults and Pytest detectors.
+Each implementation takes `fault_enabled=False`; setting it to `True` introduces
+one defect in the same code path. No external service or test data is required.
 
-## Setup
+## Setup and run
 
-Create and activate the virtual environment:
+Requires Python **3.11+**. The code uses standard-library APIs available on Linux,
+Windows, and macOS; CI is configured to test all three systems.
 
-```bash
-python3.14 -m venv .venv
-source .venv/bin/activate
+```sh
+python -m venv .venv
 ```
 
-Install the project and development dependencies:
+Activate the environment with `source .venv/bin/activate` on Linux/macOS,
+or `.venv\Scripts\Activate.ps1` in Windows PowerShell. Then:
 
-```bash
-pip install -e ".[dev]"
+```sh
+python -m pip install -e ".[dev]"
+
+# No flags: all scenarios use their fixed implementations.
+python -m pytest -v -s
+
+# Enable only I/O contention: its tests should FAIL with FAULT_DETECTED[io-contention].
+python -m pytest -v -s --io-contention-fault
+
+# Run only the CPU scenario with its fault enabled (expected FAILED).
+python -m pytest -v -s tests/integration/test_cpu_contention.py --cpu-contention-fault
 ```
 
-## Running tests
+The flags are registered in `tests/conftest.py` and can be combined independently:
 
-Run all tests with the fixed implementations:
+| Flag | Injected fault |
+|---|---|
+| `--race-fault` | TOCTOU race |
+| `--deadlock-fault` | Circular-wait deadlock |
+| `--thread-contention-fault` | Hot cache lock |
+| `--io-contention-fault` | Excess I/O writers |
+| `--cpu-contention-fault` | CPU starvation |
 
-```bash
-pytest -v
+**Without flags: PASSED (exit 0). With a fault enabled: its test reports FAILED
+(exit 1), reporting `FAULT_DETECTED[...]`.** Tests always check the same invariant;
+flags change only the implementation. `-s` shows observed metrics.
+
+For CI, a separate verification checks that each faulty implementation really
+fails its integration test with the correct `FaultDetected` exception:
+
+```sh
+python -m pytest -v -s tests/verify_faults.py
 ```
 
-All tests should pass.
+This verification should pass. Missing detection, a different exception, corrupt
+output, or a watchdog timeout makes it fail. The file is run explicitly so the
+default run tests only fixed scenarios. CI runs both commands; the optional
+`scripts/verify_faults.sh` wrapper runs the verification command.
 
-Run all fault-detection checks:
+## Defects, fixes, and detection
 
-```bash
-bash scripts/verify_faults.sh
+| Scenario | Root cause and symptom | Fix | Repeatable detection |
+|---|---|---|---|
+| TOCTOU race | Inventory disappears between `exists()` and `read_text()`; the read crashes | Read directly and handle `FileNotFoundError` | Remove a temporary file immediately before the read; expect `None` |
+| Circular-wait deadlock | Two workers take inventory/state locks in opposite orders and stop | Use the same lock order | A barrier makes both hold their first lock; observe both waiting for the other's lock |
+| Thread contention | Holding a shared cache lock during fetching serializes independent fetches | Fetch outside the cache lock | Hold fetch callbacks at a gate and count how many can enter concurrently |
+| I/O contention | Too many snapshot writers wait behind a busy storage service, increasing request latency | Bound writers to the service capacity | Measure blocking on two service slots; detect an extra wait of at least one service interval |
+| CPU contention | Bulk gzip compression monopolizes a shared event-loop thread and starves a small CPU request | Yield between chunks | Count bulk chunks processed before the foreground request gets CPU time |
+
+The CPU example demonstrates **poor scheduling on one shared execution thread**.
+Both tasks do real compression. With the fault, the foreground task must wait for
+the entire batch; the fix lets it run after one chunk. This is a cooperative
+scheduling example, not an OS scheduler benchmark. It needs no CPU affinity and
+does not assume a particular core count or CPU speed.
+
+The I/O test models a storage/network service with two slots and a minimum
+20 ms service time per request, identical in both variants. A gate holds the
+first occupied slots until all clients attempt access. Excess clients really
+block on the semaphore; `monotonic()` measures their wait. The detector requires
+an extra wait of at least one service interval (20 ms). The fixed variant has
+no blocked requests. Slow writes alone do not trigger detection.
+The backend also writes real temporary files and validates all records.
+This measures queueing latency at a controlled service, not physical disk
+throughput; a fast SSD or RAM-backed temporary directory is acceptable.
+
+Expected metrics printed by the integration tests:
+
+| Metric | Fixed | Injected |
+|---|---:|---:|
+| Concurrent fetches (2 / 4 workers) | 2 / 4 | 1 / 1 |
+| Queued I/O requests (4 / 8 writers, 2 slots) | 0 / 0 | 2 / 6 |
+| Maximum I/O slot wait | 0 ms | At least 20 ms |
+| Bulk chunks delaying foreground CPU work (4 / 8 chunks) | 1 / 1 | 4 / 8 |
+| Circular wait between two locks | False | True |
+| TOCTOU file disappearance | Handled (`None`) | `FileNotFoundError` detected |
+
+These thresholds follow from the controlled scheduling and service capacity,
+rather than the evaluation machine's CPU or disk speed.
+Events and barriers control the critical interleavings. Thread overlap has a
+two-second observation window; process watchdogs allow 15 seconds. A severely
+overloaded runner can still time out and should be investigated. Watchdog expiry
+is never counted as successful fault detection.
+
+## Structure and checks
+
+- `src/amd_tasks/`: the five fault examples.
+- `tests/integration/`: scheduling, output validation, and fault detection.
+- `tests/verify_faults.py`: checks that injected faults fail the integration tests.
+- `tests/helpers.py`: fault/scenario exceptions and portable process isolation using
+  `multiprocessing` with `spawn`; blocked threads are terminated with their process.
+- Other tests cover normal reads, backend failures, corrupt output, and cleanup.
+
+Fetch, persistence, and compression callbacks can be replaced with other mocks or
+real adapters. Their tests should retain output validation and use the adapter's
+documented concurrency limits. The detectors target these specific defects; they
+are not general-purpose concurrency profilers.
+
+Thread and I/O workers use `ThreadPoolExecutor`: close the returned pool with
+`with pool` and call `job.result()` for each job to propagate worker exceptions.
+
+```sh
+ruff check .
+ruff format --check .
+mypy src tests
 ```
-
-The script enables each fault separately and verifies that the corresponding
-test fails for the expected reason.
-
-## Fault flags
-
-Each scenario has two modes:
-
-```text
-no fault flag
-→ fixed implementation
-→ test passes
-
-fault flag enabled
-→ buggy implementation
-→ same test fails
-```
-
-Available flags:
-
-```text
---race-fault
---deadlock-fault
---thread-contention-fault
---io-contention-fault
---cpu-contention-fault
-```
-
-The fault flags only switch between the fixed and buggy implementations.
-The test expectation stays the same.
-
----
-
-## TOCTOU race condition
-
-The inventory reader accesses a file that may disappear between checking that
-it exists and actually reading it.
-
-### Bug
-
-```text
-exists() -> True
-       |
-       | file removed
-       v
-read() -> FileNotFoundError
-```
-
-The fixed implementation reads the file directly and handles
-`FileNotFoundError`.
-
-The test deterministically removes a real temporary file immediately before
-the read operation.
-
-Run fixed:
-
-```bash
-pytest -v tests/integration/test_toctou.py
-```
-
-Expected:
-
-```text
-PASSED
-```
-
-Enable the fault:
-
-```bash
-pytest -v tests/integration/test_toctou.py --race-fault
-```
-
-Expected:
-
-```text
-FAILED
-FAULT_DETECTED[toctou]
-```
-
----
-
-## Circular-wait deadlock
-
-Two threads operate on inventory and synchronization state.
-
-The fixed implementation always acquires locks in the same order:
-
-```text
-inventory_lock -> sync_state_lock
-```
-
-The faulty implementation reverses the order in one worker:
-
-```text
-inventory writer:   inventory_lock -> sync_state_lock
-fetch-state writer: sync_state_lock -> inventory_lock
-```
-
-This creates a circular wait.
-
-A `Barrier` makes the deadlock deterministic.
-The scenario runs in a separate process so the watchdog can terminate it
-after detecting the deadlock.
-
-Run fixed:
-
-```bash
-pytest -v tests/integration/test_deadlock.py
-```
-
-Expected:
-
-```text
-PASSED
-```
-
-Enable the fault:
-
-```bash
-pytest -v tests/integration/test_deadlock.py --deadlock-fault
-```
-
-Expected:
-
-```text
-FAILED
-FAULT_DETECTED[deadlock]
-```
-
----
-
-## Thread contention
-
-Multiple workers fetch switch inventory and update a shared cache.
-
-The fixed implementation performs the expensive fetch outside the cache lock:
-
-```text
-fetch -> cache_lock -> cache update
-```
-
-The faulty implementation holds the cache lock during the fetch:
-
-```text
-cache_lock -> fetch -> cache update
-```
-
-This creates a hot lock and serializes work that should run concurrently.
-
-The test measures how many workers can enter the fetch operation at the same
-time and also verifies that all workers finish successfully.
-
-Run fixed:
-
-```bash
-pytest -v tests/integration/test_thread_contention.py
-```
-
-Expected:
-
-```text
-PASSED
-```
-
-Enable the fault:
-
-```bash
-pytest -v tests/integration/test_thread_contention.py \
-    --thread-contention-fault
-```
-
-Expected:
-
-```text
-FAILED
-FAULT_DETECTED[thread-contention]
-```
-
----
-
-## I/O contention
-
-Multiple workers persist switch inventory snapshots to disk.
-
-The faulty implementation performs a synchronous disk flush for every small
-inventory record:
-
-```text
-write -> flush -> fsync
-write -> flush -> fsync
-write -> flush -> fsync
-...
-```
-
-This creates excessive synchronous disk I/O when several writers run at the
-same time.
-
-The fixed implementation batches the complete snapshot and performs one
-synchronous flush:
-
-```text
-write complete snapshot -> flush -> fsync
-```
-
-The test performs real file writes and real `fsync()` calls.
-It counts synchronous flushes as the deterministic detection signal and also
-reports execution time as a diagnostic metric.
-
-Run fixed:
-
-```bash
-pytest -v -s tests/integration/test_io_contention.py
-```
-
-Expected:
-
-```text
-PASSED
-```
-
-Enable the fault:
-
-```bash
-pytest -v -s tests/integration/test_io_contention.py \
-    --io-contention-fault
-```
-
-Expected:
-
-```text
-FAILED
-FAULT_DETECTED[io-contention]
-```
-
----
-
-## CPU contention
-
-Inventory snapshots are compressed before archival.
-
-The fixed implementation uses a bounded number of CPU workers:
-
-```text
-8 snapshots
-     |
-     v
-2 compression processes
-```
-
-The faulty implementation starts one CPU-bound process for every snapshot:
-
-```text
-8 snapshots
-     |
-     v
-8 compression processes
-```
-
-The processes perform real inventory serialization and gzip compression.
-
-The detector verifies that the configured CPU worker limit is respected.
-Execution time is reported as a diagnostic metric but is not used as the main
-CI threshold because runtime depends on the host hardware.
-
-Run fixed:
-
-```bash
-pytest -v -s tests/integration/test_cpu_contention.py
-```
-
-Expected:
-
-```text
-PASSED
-```
-
-Enable the fault:
-
-```bash
-pytest -v -s tests/integration/test_cpu_contention.py \
-    --cpu-contention-fault
-```
-
-Expected:
-
-```text
-FAILED
-FAULT_DETECTED[cpu-contention]
-```
-
----
-
-## CI
-
-GitHub Actions runs:
-
-```text
-Code quality
-Unit tests
-Integration tests
-Fault detection
-```
-
-Normal tests run against the fixed implementations and must pass.
-
-The fault-detection job enables each faulty implementation separately and
-checks for its specific `FAULT_DETECTED[...]` marker.
-
-This prevents unrelated test failures from being reported as successful fault
-detection.
