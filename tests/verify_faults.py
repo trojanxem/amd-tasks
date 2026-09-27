@@ -6,7 +6,6 @@ This filename intentionally keeps verification out of the default test run.
 
 import pytest
 
-from tests.helpers import FaultDetected
 from tests.integration.test_cpu_contention import (
     test_foreground_request_gets_cpu_time as check_cpu,
 )
@@ -33,12 +32,10 @@ from tests.integration.test_toctou import test_disappearing_inventory_is_handled
     ],
 )
 def test_injected_fault_is_detected(check, args, fault):
-    with pytest.raises(FaultDetected) as detected:
+    with pytest.raises(AssertionError, match=rf"FAULT_DETECTED\[{fault}\]"):
         check(*args)
-    assert detected.value.fault == fault
 
 
 def test_toctou_is_detected(tmp_path, monkeypatch):
-    with pytest.raises(FaultDetected) as detected:
+    with pytest.raises(AssertionError, match=r"FAULT_DETECTED\[toctou\]"):
         check_toctou(tmp_path, monkeypatch, True)
-    assert detected.value.fault == "toctou"

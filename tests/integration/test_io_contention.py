@@ -9,7 +9,6 @@ from time import monotonic, sleep
 import pytest
 
 from amd_tasks.contention.io import persist_snapshot, start_snapshot_writers
-from tests.helpers import FaultDetected, ScenarioError, run_isolated
 
 SERVICE_TIME = 0.02  # Model a storage/network request taking at least 20 ms.
 
@@ -54,8 +53,7 @@ def _scenario(fault_enabled, switch_count):
                 release.set()
             for job in jobs:
                 job.result()
-        if not ready:
-            raise ScenarioError("storage clients did not reach the observation point")
+        assert ready, "storage clients did not reach the observation point"
         assert {path.name for path in root.iterdir()} == {
             f"switch-{i}.jsonl" for i in range(switch_count)
         }
@@ -68,13 +66,12 @@ def _scenario(fault_enabled, switch_count):
 
 @pytest.mark.parametrize("switch_count", [4, 8])
 def test_storage_has_no_queueing_latency_spike(io_contention_fault, switch_count):
-    queued, max_wait = run_isolated(_scenario, io_contention_fault, switch_count)
+    queued, max_wait = _scenario(io_contention_fault, switch_count)
     print(
         f"I/O: {queued} queued requests; max slot wait={max_wait * 1000:.1f} ms; "
         f"service time >= {SERVICE_TIME * 1000:.0f} ms"
     )
-    if max_wait >= SERVICE_TIME:
-        raise FaultDetected(
-            "io-contention",
-            f"slot wait {max_wait * 1000:.1f} ms >= one service interval; {queued} queued requests",
-        )
+    assert max_wait < SERVICE_TIME, (
+        f"FAULT_DETECTED[io-contention]: slot wait {max_wait * 1000:.1f} ms "
+        f">= one service interval; {queued} queued requests"
+    )

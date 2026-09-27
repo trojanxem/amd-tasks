@@ -6,7 +6,6 @@ import gzip
 import pytest
 
 from amd_tasks.contention.cpu import compress_inventory
-from tests.helpers import FaultDetected, run_isolated
 
 
 def _scenario(fault_enabled, chunk_count):
@@ -19,7 +18,8 @@ def _scenario(fault_enabled, chunk_count):
 
 @pytest.mark.parametrize("chunk_count", [4, 8])
 def test_foreground_request_gets_cpu_time(cpu_contention_fault, chunk_count):
-    delayed_by = run_isolated(_scenario, cpu_contention_fault, chunk_count)
+    delayed_by = _scenario(cpu_contention_fault, chunk_count)
     print(f"CPU: foreground waited for {delayed_by}/{chunk_count} bulk chunks; limit=1")
-    if delayed_by > 1:
-        raise FaultDetected("cpu-contention", f"foreground delayed by {delayed_by} chunks")
+    assert delayed_by <= 1, (
+        f"FAULT_DETECTED[cpu-contention]: foreground delayed by {delayed_by} chunks"
+    )

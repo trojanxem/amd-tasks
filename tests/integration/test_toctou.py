@@ -3,7 +3,6 @@
 from pathlib import Path
 
 from amd_tasks.race_condition import read_inventory, write_inventory
-from tests.helpers import FaultDetected
 
 
 def test_disappearing_inventory_is_handled(tmp_path, monkeypatch, race_fault: bool) -> None:
@@ -23,6 +22,6 @@ def test_disappearing_inventory_is_handled(tmp_path, monkeypatch, race_fault: bo
         result = read_inventory(inventory_file, fault_enabled=race_fault)
     except FileNotFoundError as error:
         print("TOCTOU: unhandled file disappearance")
-        raise FaultDetected("toctou", "file disappeared before read") from error
+        raise AssertionError("FAULT_DETECTED[toctou]: file disappeared before read") from error
     assert result is None
     print("TOCTOU: file disappearance handled")

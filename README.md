@@ -44,14 +44,15 @@ The flags are registered in `tests/conftest.py` and can be combined independentl
 flags change only the implementation. `-s` shows observed metrics.
 
 For CI, a separate verification checks that each faulty implementation really
-fails its integration test with the correct `FaultDetected` exception:
+fails its integration test with an `AssertionError` carrying the expected
+`FAULT_DETECTED[...]` message:
 
 ```sh
 python -m pytest -v -s tests/verify_faults.py
 ```
 
-This verification should pass. Missing detection, a different exception, corrupt
-output, or a watchdog timeout makes it fail. The file is run explicitly so the
+This verification should pass. Missing detection, an unrelated failure, corrupt
+output, or a deadlock scenario timeout makes it fail. The file is run explicitly so the
 default run tests only fixed scenarios. CI runs both commands; the optional
 `scripts/verify_faults.sh` wrapper runs the verification command.
 
@@ -95,22 +96,27 @@ Expected metrics printed by the integration tests:
 These thresholds follow from the controlled scheduling and service capacity,
 rather than the evaluation machine's CPU or disk speed.
 Events and barriers control the critical interleavings. Thread overlap has a
-two-second observation window; process watchdogs allow 15 seconds. A severely
-overloaded runner can still time out and should be investigated. Watchdog expiry
-is never counted as successful fault detection.
+two-second observation window. Only the deadlock test uses a separate process,
+with a 15-second limit, so its deliberately blocked threads cannot hang pytest.
+An expired process limit is a test failure, not proof of a deadlock.
+A severely overloaded runner can still exceed the observation windows.
 
 ## Structure and checks
 
 - `src/amd_tasks/`: the five fault examples.
 - `tests/integration/`: scheduling, output validation, and fault detection.
 - `tests/verify_faults.py`: checks that injected faults fail the integration tests.
-- `tests/helpers.py`: fault/scenario exceptions and portable process isolation using
-  `multiprocessing` with `spawn`; blocked threads are terminated with their process.
-- Other tests cover normal reads, backend failures, corrupt output, and cleanup.
+- Other tests cover normal reads, backend failures, and corrupt output.
+
+Tests call the examples directly and use ordinary assertions. The deadlock test
+keeps its process setup and cleanup in the same file. One event reports whether
+both workers were observed waiting for each other's lock; there is no shared
+process runner or exception transport.
 
 Fetch, persistence, and compression callbacks can be replaced with other mocks or
 real adapters. Their tests should retain output validation and use the adapter's
-documented concurrency limits. The detectors target these specific defects; they
+documented concurrency limits and I/O timeouts: the other tests have no process
+watchdog for an adapter that hangs. The detectors target these specific defects; they
 are not general-purpose concurrency profilers.
 
 Thread and I/O workers use `ThreadPoolExecutor`: close the returned pool with
