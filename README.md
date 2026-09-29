@@ -136,5 +136,4 @@ Thread and I/O workers use `ThreadPoolExecutor`: close the returned pool with
 ```sh
 ruff check .
 ruff format --check .
-mypy src tests
 ```
