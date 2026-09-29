@@ -113,6 +113,17 @@ keeps its process setup and cleanup in the same file. One event reports whether
 both workers were observed waiting for each other's lock; there is no shared
 process runner or exception transport.
 
+The deadlock example keeps two named operations, `save_inventory()` and
+`update_fetch_state()`, with the lock order visible in their `with` statements.
+Their completion events distinguish a finished operation from a crashed thread.
+The barrier signals when both workers hold different locks; if both remain
+blocked, neither can acquire the other's lock.
+
+CPU and thread tests contain their setup, measurement, and assertions together.
+The I/O test shares one measurement function with the slow-write and corruption
+checks. Its queue receives a signal from each writer before the gate releases
+the first writes, making the service contention repeatable.
+
 Fetch, persistence, and compression callbacks can be replaced with other mocks or
 real adapters. Their tests should retain output validation and use the adapter's
 documented concurrency limits and I/O timeouts: the other tests have no process

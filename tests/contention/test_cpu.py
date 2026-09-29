@@ -28,4 +28,4 @@ def test_invalid_compressed_payload_is_rejected(monkeypatch):
 
     monkeypatch.setattr(test_cpu_contention, "compress_inventory", corrupt)
     with pytest.raises(gzip.BadGzipFile):
-        test_cpu_contention._scenario(False, 4)
+        test_cpu_contention.test_foreground_request_gets_cpu_time(False, 4)

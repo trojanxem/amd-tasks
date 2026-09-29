@@ -21,7 +21,8 @@ def start_inventory_workers(
         if fault_enabled:
             # BUG: fetching holds the shared cache lock.
             with cache_lock:
-                cache[worker_id] = fetch_inventory(worker_id)
+                inventory = fetch_inventory(worker_id)
+                cache[worker_id] = inventory
         else:
             # FIX: fetch before taking the lock to update the cache.
             inventory = fetch_inventory(worker_id)

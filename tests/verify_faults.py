@@ -19,23 +19,29 @@ from tests.integration.test_thread_contention import (
 from tests.integration.test_toctou import test_disappearing_inventory_is_handled as check_toctou
 
 
-@pytest.mark.parametrize(
-    ("check", "args", "fault"),
-    [
-        (check_cpu, (True, 4), "cpu-contention"),
-        (check_cpu, (True, 8), "cpu-contention"),
-        (check_deadlock, (True,), "deadlock"),
-        (check_io, (True, 4), "io-contention"),
-        (check_io, (True, 8), "io-contention"),
-        (check_threads, (True, 2), "thread-contention"),
-        (check_threads, (True, 4), "thread-contention"),
-    ],
-)
-def test_injected_fault_is_detected(check, args, fault):
-    with pytest.raises(AssertionError, match=rf"FAULT_DETECTED\[{fault}\]"):
-        check(*args)
+@pytest.mark.parametrize("chunk_count", [4, 8])
+def test_cpu_fault_is_detected(chunk_count):
+    with pytest.raises(AssertionError, match=r"FAULT_DETECTED\[cpu-contention\]"):
+        check_cpu(cpu_contention_fault=True, chunk_count=chunk_count)
+
+
+def test_deadlock_is_detected():
+    with pytest.raises(AssertionError, match=r"FAULT_DETECTED\[deadlock\]"):
+        check_deadlock(deadlock_fault=True)
+
+
+@pytest.mark.parametrize("switch_count", [4, 8])
+def test_io_fault_is_detected(switch_count):
+    with pytest.raises(AssertionError, match=r"FAULT_DETECTED\[io-contention\]"):
+        check_io(io_contention_fault=True, switch_count=switch_count)
+
+
+@pytest.mark.parametrize("worker_count", [2, 4])
+def test_thread_fault_is_detected(worker_count):
+    with pytest.raises(AssertionError, match=r"FAULT_DETECTED\[thread-contention\]"):
+        check_threads(thread_contention_fault=True, worker_count=worker_count)
 
 
 def test_toctou_is_detected(tmp_path, monkeypatch):
     with pytest.raises(AssertionError, match=r"FAULT_DETECTED\[toctou\]"):
-        check_toctou(tmp_path, monkeypatch, True)
+        check_toctou(tmp_path, monkeypatch, race_fault=True)

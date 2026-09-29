@@ -38,7 +38,7 @@ def test_invalid_json_is_rejected(monkeypatch):
 
     monkeypatch.setattr(test_io_contention, "persist_snapshot", corrupt)
     with pytest.raises(json.JSONDecodeError):
-        test_io_contention._scenario(False, 4)
+        test_io_contention._measure_storage_wait(False, 4)
 
 
 def test_slow_writes_without_queueing_are_not_contention(monkeypatch):
@@ -49,6 +49,6 @@ def test_slow_writes_without_queueing_are_not_contention(monkeypatch):
         persist(path, payload)
 
     monkeypatch.setattr(test_io_contention, "persist_snapshot", slow_write)
-    queued, max_wait = test_io_contention._scenario(False, 4)
+    queued, max_wait = test_io_contention._measure_storage_wait(False, 4)
     assert queued == 0
     assert max_wait == 0

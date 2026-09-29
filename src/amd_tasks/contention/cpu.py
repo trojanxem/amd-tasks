@@ -21,11 +21,9 @@ async def compress_inventory(
     """
     if not snapshots:
         raise ValueError("at least one snapshot is required")
-    started = asyncio.Event()
     archives: list[bytes] = []
 
     async def bulk() -> None:
-        started.set()
         for snapshot in snapshots:
             archives.append(compress(snapshot))
             if not fault_enabled:
@@ -34,11 +32,10 @@ async def compress_inventory(
             # BUG: without the yield, the entire batch blocks the foreground task.
 
     async def foreground() -> tuple[bytes, int]:
-        await started.wait()
         delayed_by = len(archives)
         return compress(b"foreground inventory request"), delayed_by
 
-    # Foreground first waits for bulk to start; scheduling is controlled, not timed.
-    response, _ = await asyncio.gather(foreground(), bulk())
+    # Schedule bulk first. Its first yield lets the waiting foreground task run.
+    _, response = await asyncio.gather(bulk(), foreground())
     compressed_response, delayed_by = response
     return archives, compressed_response, delayed_by
